@@ -1,14 +1,16 @@
 use std::{collections::{BTreeMap, HashMap}, path::PathBuf, time::Duration};
 
-use mintymacks::{bits::board::BitBoard, model::moves::ChessMove, notation::{algebraic::AlgebraicMove, uci::engine::EngineOption}, zobrist::{ZobHash, ZobristBoard}};
+use mintymacks::{arrays::ArrayBoard, bits::board::BitBoard, model::{castling::CastlingRights, moves::ChessMove, ColoredChessPiece, Square}, notation::{algebraic::AlgebraicMove, uci::engine::EngineOption}, zobrist::{ZobHash, ZobristBoard}};
 
-use crate::{engine::Engine, program::game::Game, settings::Settings};
+use crate::{engine::Engine, program::{enigne_player::EnginePlayer, game::Game, human_player::HumanPlayer}, settings::Settings};
 
 pub mod game;
 pub mod human_player;
 pub mod enigne_player;
 
 pub struct Program {
+    board: ArrayBoard<Option<ColoredChessPiece>>,
+    setup: Option<SetupMenu>,
     white: Option<Player>,
     black: Option<Player>,
     settings: Option<Settings>,
@@ -21,33 +23,15 @@ pub enum MenuState {
     MainMenu,
     Playing,
     Setup,
+    Analyze,
+}
+
+pub struct SetupMenu {
+    castling_rights: CastlingRights,
+    selected_piece: Option<ColoredChessPiece>,
 }
 
 pub enum Player {
     Human(HumanPlayer),
     Engine(EnginePlayer)
-}
-
-pub struct HumanPlayer {
-    pub name: String,
-    pub elo: Option<u16>,
-    pub title: Option<Title>,
-}
-
-pub enum Title {
-    CM, FM, IM, GM
-}
-
-pub struct EnginePlayer {
-    pub id: String,
-    pub path: PathBuf,
-
-    pub name: Option<String>,
-    pub author: Option<String>,
-
-    pub time_limit: Duration,
-
-    pub settings: BTreeMap<String, EngineOption>,
-
-    pub program: Option<Engine>,
 }
