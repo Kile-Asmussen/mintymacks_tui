@@ -1,0 +1,14 @@
+{
+    "rust-analyzer.runnables.extraArgs": [
+        "--release"
+    ],
+    "rust-analyzer.runnables.extraTestBinaryArgs": [
+        "--no-capture",
+        "--show-output"
+    ],
+    "rust-analyzer.assist.preferSelf": true,
+    "rust-analyzer.rustfmt.extraArgs": [
+        "+nightly"
+    ],
+    "editor.formatOnSave": true
+}

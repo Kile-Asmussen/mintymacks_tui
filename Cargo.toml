@@ -1,0 +1,11 @@
+[package]
+name = "mintymacks_tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mintymacks = { git = "https://github.com/Kile-Asmussen/mintymacks" }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+tokio = { version = "1.32.0", features = ["full"] }
+tokio-stream = "0.1.17"
+serde = { version = "1.0.228", features = ["derive"] }
