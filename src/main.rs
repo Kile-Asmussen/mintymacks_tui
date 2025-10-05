@@ -22,6 +22,7 @@ mod engine;
 mod program;
 mod settings;
 mod user_input;
+mod widgets;
 
 #[tokio::main]
 pub async fn main() -> tokio::io::Result<()> {
