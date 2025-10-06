@@ -9,59 +9,56 @@
 #![feature(adt_const_params)]
 #![feature(path_add_extension)]
 
-use std::{collections::{vec_deque, VecDeque}, io::{stdout, Result}, path::Path, process::Output, time::Duration};
-use crossterm::{cursor, event, execute, style::Print, terminal};
-use mintymacks::notation::uci::{engine::UciEngine, gui::UciGui};
-use tokio::select;
+use std::{collections::{vec_deque, VecDeque}, io::{stdout, Result, Write}, path::Path, process::Output, time::Duration};
+use crossterm::{cursor, event::{self, Event, EventStream, KeyCode}, execute, style::Print, terminal};
+use mintymacks::{bits::board::BitBoard, notation::uci::{engine::UciEngine, gui::UciGui}};
+use tokio::{io::AsyncWriteExt, select, time::sleep};
 use tokio_stream::{Stream, StreamExt};
 
-use crate::engine::Engine;
+use crate::{engine::Engine, widgets::BoardRenderer};
 
 mod run;
 mod engine;
 mod program;
 mod settings;
-mod user_input;
 mod widgets;
+mod move_select;
 
 #[tokio::main]
 pub async fn main() -> tokio::io::Result<()> {
-    let mut stockfish = Engine::new(Path::new("stockfish"), &[]).await?;
+    widgets::setup()?;
 
-    
-    let (mut ucout, mut ucin) = stockfish.split();
+    let board_render = BoardRenderer { row: 4, col: 2, rotated: false };
 
-    let mut out = VecDeque::from([UciGui::Uci()]);
-    let mut res = vec![];
+    let bitboard = BitBoard::startpos();
+
+    let mut events = EventStream::new();
 
     loop {
-        let delay = tokio::time::sleep(Duration::from_millis(1000));
-
+        let ev = events.next();
+        let delay = sleep(Duration::from_millis(1000/60));
         select! {
-            _ = delay => {
-                break;
-            }
-            uci = ucin.read() => {
-                match uci? {
-                    Some(UciEngine::UciOk()) => {
-                        res.push(UciEngine::UciOk());
-                        break;
+            Some(ev) = ev => {
+                if let Ok(ev) = ev {
+                    match ev {
+                        Event::Key(k) => {
+                            if k.code == KeyCode::Char('q') {
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
-                    Some(uci) => res.push(uci),
-                    None => {}
                 }
             }
-            Ok(true) = ucout.write(out.back()), if !out.is_empty() => {
-                out.pop_back();
-            }
+            _ = delay => {}
         }
+        let arrayboard = bitboard.render();
+        let board = board_render.render(&arrayboard, 0, 0);
+        tokio::io::stdout().write_all(&board).await?;
     }
-
-    stockfish.quit().await;
-
-    for uci in res {
-        println!("{:?}", uci);
-    }
+    
+    widgets::teardown()?;
 
     Ok(())
 }
+
