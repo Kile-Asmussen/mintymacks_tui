@@ -7,7 +7,6 @@
 #![feature(hash_map_macro)]
 #![feature(try_blocks)]
 #![feature(adt_const_params)]
-#![feature(path_add_extension)]
 
 use std::{collections::{vec_deque, VecDeque}, io::{stdout, Result, Write}, path::Path, process::Output, time::Duration};
 use crossterm::{cursor, event::{self, Event, EventStream, KeyCode}, execute, style::Print, terminal};
@@ -19,10 +18,10 @@ use crate::{engine::Engine, widgets::BoardRenderer};
 
 mod run;
 mod engine;
-mod program;
 mod settings;
 mod widgets;
 mod move_select;
+mod player;
 
 #[tokio::main]
 pub async fn main() -> tokio::io::Result<()> {
