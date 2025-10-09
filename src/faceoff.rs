@@ -57,6 +57,10 @@ pub struct Faceoff {
     /// Turn timeout in miliseconds
     #[clap(long)]
     pub timeout: u64,
+
+    /// Only print the end result
+    #[clap(short)]
+    pub quiet: bool,
 }
 
 impl Runnable for Faceoff {
@@ -123,7 +127,9 @@ impl Runnable for Faceoff {
             };
 
             res.moves.push(pair.clone());
-            show_pgn(&res).await?;
+            if !self.quiet {
+                show_pgn(&res, true).await?;
+            }
 
             let Some((cm, mut am, pmv)) = find_move(
                 &mut board,
@@ -159,7 +165,9 @@ impl Runnable for Faceoff {
                 break;
             };
 
-            show_pgn(&res).await?;
+            if !self.quiet {
+                show_pgn(&res, true).await?;
+            }
 
             let Some((cm, mut am, pmv)) = find_move(
                 &mut board,
@@ -195,10 +203,16 @@ impl Runnable for Faceoff {
                 break;
             };
 
-            show_pgn(&res).await?;
+            if !self.quiet {
+                show_pgn(&res, true).await?;
+            }
         }
 
-        show_pgn(&res).await?;
+        if self.quiet {
+            show_pgn(&res, false).await?;
+        } else {
+            show_pgn(&res, true).await?;
+        }
 
         Ok(ExitCode::SUCCESS)
     }
@@ -352,17 +366,21 @@ async fn best_move(
     }
 }
 
-async fn show_pgn(pgn: &PGN) -> tokio::io::Result<()> {
+async fn show_pgn(pgn: &PGN, clear: bool) -> tokio::io::Result<()> {
     let mut s = "\n".to_string();
     pgn.to_string(&mut s, true);
     let mut res = vec![];
 
-    execute!(
-        res,
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0),
-        style::Print(s)
-    );
+    if clear {
+        execute!(
+            res,
+            terminal::Clear(terminal::ClearType::All),
+            cursor::MoveTo(0, 0),
+            style::Print(s)
+        );
+    } else {
+        execute!(res, style::Print(s));
+    }
 
     stdout().write_all(&res[..]).await?;
     stdout().flush().await?;
