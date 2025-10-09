@@ -1,5 +1,6 @@
+use core::hash;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fmt::format,
     path::PathBuf,
     process::{self, ExitCode},
@@ -24,6 +25,7 @@ use mintymacks::{
             gui::{GoCommand, PositionString, UciGui},
         },
     },
+    zobrist::{ZobHash, ZobristBoard},
 };
 use tokio::{
     io::{AsyncWriteExt, stdout},
@@ -101,6 +103,11 @@ impl Runnable for Faceoff {
         let mut board = BitBoard::startpos();
         let mut pseudomoves = vec![];
         let mut current = vec![];
+        let mut hasher = ZobristBoard::new();
+        let mut halfmoves = 0;
+        let mut seen = hash_map! {
+            hasher.hash(&board) => 1
+        };
         board.moves(&mut current);
 
         loop {
@@ -117,10 +124,6 @@ impl Runnable for Faceoff {
             res.moves.push(pair.clone());
             show_pgn(&res).await?;
 
-            if pair.turn > 100 {
-                break;
-            }
-
             let Some((cm, mut am, pmv)) = find_move(
                 &mut board,
                 &mut white_engine,
@@ -134,16 +137,25 @@ impl Runnable for Faceoff {
                 break;
             };
 
-            let (am, win) = make_moves(&mut board, cm, am, pmv, &mut pseudomoves, &mut current);
+            let (am, win) = make_moves(
+                &mut board,
+                &hasher,
+                &mut seen,
+                &mut halfmoves,
+                cm,
+                am,
+                pmv,
+                &mut pseudomoves,
+                &mut current,
+            );
 
             pair.white = Some(am);
+            res.moves.pop();
+            res.moves.push(pair.clone());
             if win.is_some() {
                 res.end = winstring(win);
                 break;
             }
-
-            res.moves.pop();
-            res.moves.push(pair.clone());
 
             show_pgn(&res).await?;
 
@@ -160,16 +172,25 @@ impl Runnable for Faceoff {
                 break;
             };
 
-            let (am, win) = make_moves(&mut board, cm, am, pmv, &mut pseudomoves, &mut current);
+            let (am, win) = make_moves(
+                &mut board,
+                &hasher,
+                &mut seen,
+                &mut halfmoves,
+                cm,
+                am,
+                pmv,
+                &mut pseudomoves,
+                &mut current,
+            );
 
             pair.black = Some(am);
+            res.moves.pop();
+            res.moves.push(pair);
             if win.is_some() {
                 res.end = winstring(win);
                 break;
             }
-            show(format!("Playing {}", pair.to_string())).await?;
-            res.moves.pop();
-            res.moves.push(pair);
 
             show_pgn(&res).await?;
         }
@@ -189,6 +210,9 @@ async fn show(mut s: String) -> tokio::io::Result<()> {
 
 fn make_moves(
     board: &mut BitBoard,
+    hasher: &ZobristBoard,
+    seen: &mut HashMap<ZobHash, u8>,
+    halfmoves: &mut u16,
     cm: ChessMove,
     mut am: AlgebraicMove,
     pmv: LongAlg,
@@ -202,8 +226,18 @@ fn make_moves(
     }
     current.clear();
     board.moves(current);
+    *halfmoves += 1;
+    if cm.irreversible() {
+        *halfmoves = 0;
+    }
 
-    let win = Victory::determine(&board, 0, &current, 0, &hash_map! {});
+    let win = Victory::determine(
+        board,
+        hasher.hash(board) ^ hasher.metadata.hash_color(board.metadata.to_move),
+        &current,
+        *halfmoves,
+        seen,
+    );
     if win.is_some() && win == Some(Victory::from_color(cm.piece.color())) {
         am.check_or_mate = Some(false);
     }
@@ -304,7 +338,7 @@ async fn best_move(
             arg.push_back(UciGui::Stop());
         }
 
-        if now.elapsed() > Duration::from_millis(time) * 2 {
+        if now.elapsed() > Duration::from_millis(time) * 5 {
             return Ok(None);
         }
     }
