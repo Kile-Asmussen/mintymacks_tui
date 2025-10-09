@@ -41,7 +41,11 @@ pub async fn load_engine(prof: &EngineProfile) -> tokio::io::Result<(EngineHandl
 
     details.load_profile(prof);
 
-    handle.interleave(&mut details.set_options(), &mut vec![]);
+    handle.interleave(
+        &mut details.set_options(),
+        &mut vec![],
+        Duration::from_millis(100),
+    );
 
     Ok((handle, details))
 }
@@ -78,7 +82,11 @@ impl EngineDetails {
         let mut ingress = vec![];
 
         engine
-            .interleave(&mut VecDeque::from([UciGui::Uci()]), &mut ingress)
+            .interleave(
+                &mut VecDeque::from([UciGui::Uci()]),
+                &mut ingress,
+                Duration::from_millis(100),
+            )
             .await?;
 
         Ok(EngineDetails::new(&ingress))
@@ -176,18 +184,16 @@ impl EngineHandle {
         &mut self,
         egress: &mut VecDeque<UciGui>,
         ingress: &mut Vec<UciEngine>,
+        timeout: Duration,
     ) -> tokio::io::Result<()> {
         let n = egress.len();
         let (mut cin, mut cout) = self.split();
 
         loop {
             select! {
-                _ = sleep(Duration::from_millis(1000)) => { break; }
+                _ = sleep(timeout) => { break; }
                 uci = cin.receive() => {
                     if let Some(uci) = uci? {
-                        if uci == UciEngine::UciOk() {
-                            break;
-                        }
                         ingress.push(uci);
                     }
                 }

@@ -16,6 +16,7 @@ use mintymacks::{
     },
     notation::{
         algebraic::AlgebraicMove,
+        fen::render_fen,
         pgn::{MovePair, PGN, PGNHeaders},
         uci::{
             LongAlg,
@@ -61,37 +62,32 @@ impl Runnable for Faceoff {
         let white_profile = tokio::fs::read(&self.white).await?;
         let black_profile = tokio::fs::read(&self.black).await?;
 
-        show(format!(
-            "Opened files {:?} and {:?}",
-            &self.white, &self.black
-        ))
-        .await?;
-
         let bad_file = |_| tokio::io::Error::from(tokio::io::ErrorKind::InvalidData);
 
         let white_profile: EngineProfile = toml::from_slice(&white_profile).map_err(bad_file)?;
         let black_profile: EngineProfile = toml::from_slice(&black_profile).map_err(bad_file)?;
 
-        show(format!(
-            "Read profiles {} and {}",
-            &white_profile.engine.name, &black_profile.engine.name
-        ))
-        .await?;
-
         let (mut white_engine, mut white_details) = load_engine(&white_profile).await?;
 
         let (mut black_engine, mut black_details) = load_engine(&black_profile).await?;
 
-        show(format!(
-            "Loaded engines {} and {}",
-            &white_details.name, &black_details.name
-        ))
-        .await?;
-
         set_ownbook(&mut white_engine, &mut white_details);
         set_ownbook(&mut black_engine, &mut black_details);
 
-        show(format!("Playing:")).await?;
+        white_engine
+            .interleave(
+                &mut VecDeque::from([UciGui::UciNewGame()]),
+                &mut vec![],
+                Duration::from_millis(100),
+            )
+            .await?;
+        black_engine
+            .interleave(
+                &mut VecDeque::from([UciGui::UciNewGame()]),
+                &mut vec![],
+                Duration::from_millis(100),
+            )
+            .await?;
 
         let mut res = PGN {
             headers: PGNHeaders::default(),
@@ -241,7 +237,21 @@ async fn find_move(
 
     let Some(cm) = current.iter().find(|cm| cm.simplify() == pmv) else {
         *end = winstring(Some(Victory::from_color(mover.opposite())));
-        *end += &format! {" {{illegal move {} suggested}}", pmv.0.longalg(pmv.1)};
+        *end += &format!("\n{{illegal move {} suggested}}", pmv.0.longalg(pmv.1));
+        *end += &format!("\n{{FEN {}}}", render_fen(&board, 0));
+        *end += &format!(
+            "\n{{Legal moves: {}}}",
+            current
+                .iter()
+                .map(|cm| (cm.ambiguate(&board, &current), cm.simplify()))
+                .map(|(a, (m, p))| format!("{} ({})", a.to_string(), m.longalg(p)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        *end += &format!(
+            "{{ {:?} }}",
+            current.iter().find(|cm| cm.simplify().0 == pmv.0)
+        );
         return Ok(None);
     };
     let cm = *cm;
@@ -314,7 +324,11 @@ async fn set_ownbook(
         });
 
     engine
-        .interleave(&mut details.set_options(), &mut vec![])
+        .interleave(
+            &mut details.set_options(),
+            &mut vec![],
+            Duration::from_millis(100),
+        )
         .await?;
 
     Ok(())
