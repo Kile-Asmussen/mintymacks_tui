@@ -1,13 +1,15 @@
 use std::num::NonZero;
 
-use mintymacks::model::{moves::{ChessMove, SpecialMove}, BoardRank, ChessPiece, Dir, Square};
-
+use mintymacks::model::{
+    BoardRank, ChessPiece, Dir, Square,
+    moves::{ChessMove, SpecialMove},
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct MoveSelect {
-  origin: Option<Square>,
-  destination: Option<Square>,
-  promotion: Option<Square>,
+    origin: Option<Square>,
+    destination: Option<Square>,
+    promotion: Option<Square>,
 }
 
 impl MoveSelect {
@@ -23,20 +25,20 @@ impl MoveSelect {
 
     pub fn matches(self, mv: ChessMove) -> bool {
         Some(mv.pmv.from) == self.origin
-        && (Some(mv.pmv.to) == self.destination
-            || self.destination.is_none())
-        && (mv.special == self.promotion()
-            || self.promotion().is_none())
+            && (Some(mv.pmv.to) == self.destination || self.destination.is_none())
+            && (mv.special == self.promotion() || self.promotion().is_none())
     }
 
     pub fn promotion(self) -> Option<SpecialMove> {
-        let Some(dest) = self.destination else { return None };
+        let Some(dest) = self.destination else {
+            return None;
+        };
         let dir = if dest.file_rank().1 == BoardRank::_8 {
             Dir::South
         } else if dest.file_rank().1 == BoardRank::_1 {
             Dir::North
         } else {
-            return None
+            return None;
         };
 
         if self.promotion == dest.go(&[]) {

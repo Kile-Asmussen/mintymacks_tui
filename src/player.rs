@@ -1,9 +1,11 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use mintymacks::{model::{moves::PseudoMove, ChessPiece}, notation::uci::{engine::EngineOption, gui::GoCommand}};
+use mintymacks::{
+    model::{ChessPiece, moves::PseudoMove},
+    notation::uci::{engine::EngineOption, gui::GoCommand},
+};
 
-use crate::engine::Engine;
-
+use crate::engine::EngineHandle;
 
 pub struct EnginePlayer {
     pub id: String,
@@ -17,10 +19,8 @@ pub struct EnginePlayer {
 
     pub settings: BTreeMap<String, EngineOption>,
 
-    pub program: Option<Engine>,
+    pub program: Option<EngineHandle>,
 }
-
-
 
 pub struct HumanPlayer {
     pub name: String,
@@ -29,5 +29,8 @@ pub struct HumanPlayer {
 }
 
 pub enum Title {
-    CM, FM, IM, GM
+    CM,
+    FM,
+    IM,
+    GM,
 }

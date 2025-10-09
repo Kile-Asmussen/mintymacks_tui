@@ -1,79 +1,227 @@
+use std::{
+    collections::{HashMap, VecDeque},
+    env::current_dir,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 
-use std::{env::current_dir, path::{Path, PathBuf}, process::Stdio, time::Duration};
+use indexmap::IndexMap;
+use mintymacks::notation::uci::{
+    Uci,
+    engine::{
+        self, CheckType, ComboType, EngineOption, IdString, OptionType, SpinType, StringType,
+        UciEngine,
+    },
+    gui::{OptVal, UciGui},
+};
+use tokio::{
+    fs::File,
+    io::{
+        AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+        Error, ErrorKind, stderr,
+    },
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command},
+    select,
+    time::sleep,
+};
 
-use mintymacks::notation::uci::{engine::UciEngine, gui::UciGui, Uci};
-use tokio::{fs::File, io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, Error, ErrorKind}, process::{Child, ChildStderr, ChildStdin, ChildStdout, Command}, select};
+use crate::profile::{EngineProfile, OptSet};
 
-pub struct Engine {
-    egress: BufReader<ChildStdout>,
-    ingress: BufWriter<ChildStdin>,
-    process: Child                                          
+pub async fn load_engine(prof: &EngineProfile) -> tokio::io::Result<(EngineHandle, EngineDetails)> {
+    let mut handle = EngineHandle::open(
+        &prof.engine.command.0,
+        &prof.engine.command.1,
+        prof.engine.log,
+    )
+    .await?;
+
+    let mut details = EngineDetails::extract(&mut handle).await?;
+
+    details.load_profile(prof);
+
+    handle.interleave(&mut details.set_options(), &mut vec![]);
+
+    Ok((handle, details))
 }
 
-pub struct EngineIngress<'a>(&'a mut BufWriter<ChildStdin>);
+pub struct EngineDetails {
+    pub name: String,
+    pub author: String,
+    pub options: IndexMap<String, EngineOption>,
+}
 
-pub struct EngineEgress<'a>(&'a mut BufReader<ChildStdout>);
+impl EngineDetails {
+    pub fn new(ingress: &[UciEngine]) -> Self {
+        let mut res = Self {
+            name: String::new(),
+            author: String::new(),
+            options: IndexMap::new(),
+        };
 
-impl Engine {
-    #[must_use]
-    pub async fn new(engine: &Path, args: &[&str]) -> tokio::io::Result<Self> {
+        for com in ingress {
+            match com {
+                UciEngine::Id(IdString::Name(s)) => res.name = s.clone(),
+                UciEngine::Id(IdString::Author(s)) => res.author = s.clone(),
+                UciEngine::Option(opt) => {
+                    res.options.insert(opt.name.clone(), opt.clone());
+                }
+                _ => {}
+            }
+        }
 
-        let mut logfile = current_dir()?;
-        let engine_filename =
-            engine.file_name().ok_or(Error::from(ErrorKind::InvalidFilename))?;
-        logfile.set_file_name(engine_filename);
-        logfile.add_extension("log");
+        res
+    }
 
+    pub async fn extract(engine: &mut EngineHandle) -> tokio::io::Result<Self> {
+        let mut ingress = vec![];
 
-        let mut child = Command::new(engine).args(args)
+        engine
+            .interleave(&mut VecDeque::from([UciGui::Uci()]), &mut ingress)
+            .await?;
+
+        Ok(EngineDetails::new(&ingress))
+    }
+
+    pub fn load_profile(&mut self, prof: &EngineProfile) {
+        use OptionType::*;
+        if self.name != prof.engine.name || self.author != prof.engine.author {
+            return;
+        }
+        for (key, optval) in &prof.options {
+            if let Some(opt) = self.options.get_mut(key) {
+                match (&mut opt.option_type, optval) {
+                    (Check(ct), OptSet::Check(b)) => ct.value = Some(*b),
+                    (Spin(st), OptSet::Spin(n)) => st.value = Some(*n),
+                    (Combo(ct), OptSet::String(s)) if ct.variants.contains(s) => {
+                        ct.value = Some(s.clone())
+                    }
+                    (String(st), OptSet::String(s)) => st.value = Some(s.clone()),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub fn set_options(&self) -> VecDeque<UciGui> {
+        use OptionType::*;
+        let mut res = VecDeque::new();
+        for (_, opt) in &self.options {
+            res.push_back(UciGui::SetOption(
+                opt.name.clone(),
+                match &opt.option_type {
+                    Check(CheckType { value: Some(b), .. }) => OptVal::Check(*b),
+                    Spin(SpinType { value: Some(n), .. }) => OptVal::Spin(*n),
+                    Combo(ComboType { value: Some(s), .. }) => OptVal::StringOrCombo(s.clone()),
+                    String(StringType { value: Some(s), .. }) => OptVal::StringOrCombo(s.clone()),
+                    _ => continue,
+                },
+            ))
+        }
+        res
+    }
+}
+
+pub struct EngineHandle {
+    ingress: BufReader<ChildStdout>,
+    egress: BufWriter<ChildStdin>,
+    process: Child,
+}
+
+pub struct EngineEgress<'a>(&'a mut BufWriter<ChildStdin>);
+
+pub struct EngineIngress<'a>(&'a mut BufReader<ChildStdout>);
+
+impl EngineHandle {
+    pub async fn open(
+        engine: &Path,
+        args: &[impl AsRef<OsStr>],
+        log: bool,
+    ) -> tokio::io::Result<Self> {
+        let mut child = Command::new(engine);
+        child
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(File::create(logfile).await?.into_std().await)
-            .kill_on_drop(true).spawn()?;
-        
+            .kill_on_drop(true);
+
+        if log {
+            let mut logfile = current_dir()?;
+            let engine_filename = engine
+                .file_name()
+                .ok_or(Error::from(ErrorKind::InvalidFilename))?;
+            logfile.set_file_name(engine_filename);
+            logfile.add_extension("log");
+
+            child.stderr(File::create(logfile).await?.into_std().await);
+        } else {
+            child.stderr(Stdio::null());
+        }
+
+        let mut child = child.spawn()?;
+
         let broken_pipe = || Error::from(ErrorKind::BrokenPipe);
 
-        let res = Engine {
-            egress: BufReader::new(child.stdout.take().ok_or_else( broken_pipe)?),
-            ingress: BufWriter::new(child.stdin.take().ok_or_else( broken_pipe)?),
+        let res = EngineHandle {
+            ingress: BufReader::new(child.stdout.take().ok_or_else(broken_pipe)?),
+            egress: BufWriter::new(child.stdin.take().ok_or_else(broken_pipe)?),
             process: child,
         };
 
         Ok(res)
     }
 
-    #[must_use]
+    pub async fn interleave(
+        &mut self,
+        egress: &mut VecDeque<UciGui>,
+        ingress: &mut Vec<UciEngine>,
+    ) -> tokio::io::Result<()> {
+        let n = egress.len();
+        let (mut cin, mut cout) = self.split();
+
+        loop {
+            select! {
+                _ = sleep(Duration::from_millis(1000)) => { break; }
+                uci = cin.receive() => {
+                    if let Some(uci) = uci? {
+                        if uci == UciEngine::UciOk() {
+                            break;
+                        }
+                        ingress.push(uci);
+                    }
+                }
+                _ = cout.send(egress.front()), if !egress.is_empty() => {
+                    egress.pop_front();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn quit(&mut self) -> tokio::io::Result<()> {
-        select! {
-            _ = self.write(Some(&UciGui::Quit())) => {}
-            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-        };
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        self.ingress.shutdown().await?;
-        self.process.kill().await;
+        EngineEgress(&mut self.egress)
+            .send(Some(&UciGui::Quit()))
+            .await?;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        self.egress.shutdown().await?;
+        self.process.kill().await?;
         self.process.wait().await?;
         Ok(())
     }
 
-    #[must_use]
-    pub async fn read(&mut self) -> tokio::io::Result<Option<UciEngine>> {
-        EngineEgress(&mut self.egress).read().await
-    }
-
-    #[must_use]
-    pub async fn write(&mut self, uci: Option<&UciGui>) -> tokio::io::Result<bool> {
-        EngineIngress(&mut self.ingress).write(uci).await
-    }
-
-    #[must_use]
     pub fn split<'a>(&'a mut self) -> (EngineIngress<'a>, EngineEgress<'a>) {
-        (EngineIngress(&mut self.ingress), EngineEgress(&mut self.egress))
+        (
+            EngineIngress(&mut self.ingress),
+            EngineEgress(&mut self.egress),
+        )
     }
 }
 
-impl<'a> EngineIngress<'a> {
+impl<'a> EngineEgress<'a> {
     #[must_use]
-    pub async fn write(&mut self, uci: Option<&UciGui>) -> tokio::io::Result<bool> {
+    pub async fn send(&mut self, uci: Option<&UciGui>) -> tokio::io::Result<bool> {
         let Some(uci) = uci else { return Ok(false) };
         let mut res = uci.to_string();
         res.push('\n');
@@ -83,9 +231,9 @@ impl<'a> EngineIngress<'a> {
     }
 }
 
-impl<'a> EngineEgress<'a> {
+impl<'a> EngineIngress<'a> {
     #[must_use]
-    pub async fn read(&mut self) -> tokio::io::Result<Option<UciEngine>> {
+    pub async fn receive(&mut self) -> tokio::io::Result<Option<UciEngine>> {
         let mut buf = String::new();
         self.0.read_line(&mut buf).await?;
         Ok(UciEngine::from_str(&buf))

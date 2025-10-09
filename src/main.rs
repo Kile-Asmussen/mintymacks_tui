@@ -7,57 +7,98 @@
 #![feature(hash_map_macro)]
 #![feature(try_blocks)]
 #![feature(adt_const_params)]
+#![allow(async_fn_in_trait)]
+#![feature(push_mut)]
 
-use std::{collections::{vec_deque, VecDeque}, io::{stdout, Result, Write}, path::Path, process::Output, time::Duration};
-use crossterm::{cursor, event::{self, Event, EventStream, KeyCode}, execute, style::Print, terminal};
-use mintymacks::{bits::board::BitBoard, notation::uci::{engine::UciEngine, gui::UciGui}};
+use clap::{Parser, Subcommand};
+use crossterm::{
+    cursor,
+    event::{self, Event, EventStream, KeyCode},
+    execute,
+    style::Print,
+    terminal,
+};
+use mintymacks::{
+    bits::board::BitBoard,
+    notation::uci::{engine::UciEngine, gui::UciGui},
+};
+use std::{
+    collections::{VecDeque, vec_deque},
+    io::{Result, Write, stdout},
+    path::Path,
+    process::{ExitCode, Output, exit},
+    time::Duration,
+};
 use tokio::{io::AsyncWriteExt, select, time::sleep};
 use tokio_stream::{Stream, StreamExt};
 
-use crate::{engine::Engine, widgets::BoardRenderer};
+use crate::{
+    engine::EngineHandle,
+    faceoff::Faceoff,
+    new_profile::{NewBot, NewCommand, ProfileCommand},
+    widgets::BoardRenderer,
+};
 
-mod run;
 mod engine;
+mod faceoff;
+mod move_select;
+mod new_profile;
+mod openings;
+mod player;
+mod profile;
 mod settings;
 mod widgets;
-mod move_select;
-mod player;
 
-#[tokio::main]
-pub async fn main() -> tokio::io::Result<()> {
-    widgets::setup()?;
+pub trait Runnable {
+    fn tui(&self) -> bool;
 
-    let board_render = BoardRenderer { row: 4, col: 2, rotated: false };
-
-    let bitboard = BitBoard::startpos();
-
-    let mut events = EventStream::new();
-
-    loop {
-        let ev = events.next();
-        let delay = sleep(Duration::from_millis(1000/60));
-        select! {
-            Some(ev) = ev => {
-                if let Ok(ev) = ev {
-                    match ev {
-                        Event::Key(k) => {
-                            if k.code == KeyCode::Char('q') {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ = delay => {}
-        }
-        let arrayboard = bitboard.render();
-        let board = board_render.render(&arrayboard, 0, 0);
-        tokio::io::stdout().write_all(&board).await?;
-    }
-    
-    widgets::teardown()?;
-
-    Ok(())
+    async fn run(self) -> tokio::io::Result<ExitCode>;
 }
 
+#[derive(Parser)]
+pub struct Command {
+    #[clap(subcommand)]
+    subcommand: SubCommand,
+}
+
+impl Runnable for Command {
+    fn tui(&self) -> bool {
+        match &self.subcommand {
+            SubCommand::New(np) => np.tui(),
+            SubCommand::Fight(faceoff) => faceoff.tui(),
+        }
+    }
+
+    async fn run(self) -> tokio::io::Result<ExitCode> {
+        match self.subcommand {
+            SubCommand::New(np) => np.run().await,
+            SubCommand::Fight(faceoff) => faceoff.run().await,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum SubCommand {
+    /// Creates a new profile and writes to STDOUT
+    New(NewCommand),
+    /// Faces two chessbots off against each other
+    Fight(Faceoff),
+}
+
+#[tokio::main]
+pub async fn main() -> tokio::io::Result<ExitCode> {
+    let command = Command::parse();
+    let tui = command.tui();
+
+    if tui {
+        widgets::setup().await?;
+    }
+
+    let res = command.run().await;
+
+    if tui {
+        widgets::teardown().await?;
+    }
+
+    res
+}
