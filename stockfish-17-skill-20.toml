@@ -1,0 +1,45 @@
+[engine]
+name = "Stockfish 17"
+author = "the Stockfish developers (see AUTHORS file)"
+command = ["stockfish", []]
+log = false
+
+[options]
+# Debug = "<empty>"
+
+# NumaPolicy = "auto"
+
+# Threads = 1 # between 1 and 1024, default 1
+
+# Hash = 16 # between 1 and 33554432, default 16
+
+# Ponder = false # true or false, default false
+
+# MultiPV = 1 # between 1 and 256, default 1
+
+Skill = 20 # between 0 and 20, default 20
+
+# Move = 10 # between 0 and 5000, default 10
+
+# nodestime = 0 # between 0 and 10000, default 0
+
+# UCI_Chess960 = false # true or false, default false
+
+# UCI_LimitStrength = false # true or false, default false
+
+UCI_Elo = 3190 # between 1320 and 3190, default 1320
+
+# UCI_ShowWDL = false # true or false, default false
+
+# SyzygyPath = "<empty>"
+
+# SyzygyProbeDepth = 1 # between 1 and 100, default 1
+
+# Syzygy50MoveRule = true # true or false, default true
+
+# SyzygyProbeLimit = 7 # between 0 and 7, default 7
+
+# EvalFile = "nn-1111cefa1111.nnue"
+
+# EvalFileSmall = "nn-37f18f62d772.nnue"
+

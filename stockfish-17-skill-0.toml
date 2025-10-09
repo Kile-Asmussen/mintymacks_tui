@@ -1,5 +1,5 @@
 [engine]
-name = "Stockfish 17"
+name = "Badfish 17"
 author = "the Stockfish developers (see AUTHORS file)"
 command = ["stockfish", []]
 log = false
@@ -17,7 +17,7 @@ log = false
 
 # MultiPV = 1 # between 1 and 256, default 1
 
-# Skill = 20 # between 0 and 20, default 20
+Skill = 0 # between 0 and 20, default 20
 
 # Move = 10 # between 0 and 5000, default 10
 
@@ -27,7 +27,7 @@ log = false
 
 # UCI_LimitStrength = false # true or false, default false
 
-# UCI_Elo = 1320 # between 1320 and 3190, default 1320
+UCI_Elo = 1320 # between 1320 and 3190, default 1320
 
 # UCI_ShowWDL = false # true or false, default false
 

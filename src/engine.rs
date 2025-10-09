@@ -37,14 +37,14 @@ pub async fn load_engine(prof: &EngineProfile) -> tokio::io::Result<(EngineHandl
     )
     .await?;
 
-    let mut details = EngineDetails::extract(&mut handle).await?;
+    let mut details = EngineDetails::extract(&mut handle, Duration::from_millis(1000)).await?;
 
     details.load_profile(prof);
 
     handle.interleave(
         &mut details.set_options(),
         &mut vec![],
-        Duration::from_millis(100),
+        Duration::from_millis(1000),
     );
 
     Ok((handle, details))
@@ -78,15 +78,11 @@ impl EngineDetails {
         res
     }
 
-    pub async fn extract(engine: &mut EngineHandle) -> tokio::io::Result<Self> {
+    pub async fn extract(engine: &mut EngineHandle, timeout: Duration) -> tokio::io::Result<Self> {
         let mut ingress = vec![];
 
         engine
-            .interleave(
-                &mut VecDeque::from([UciGui::Uci()]),
-                &mut ingress,
-                Duration::from_millis(100),
-            )
+            .interleave(&mut VecDeque::from([UciGui::Uci()]), &mut ingress, timeout)
             .await?;
 
         Ok(EngineDetails::new(&ingress))
@@ -94,9 +90,6 @@ impl EngineDetails {
 
     pub fn load_profile(&mut self, prof: &EngineProfile) {
         use OptionType::*;
-        if self.name != prof.engine.name || self.author != prof.engine.author {
-            return;
-        }
         for (key, optval) in &prof.options {
             if let Some(opt) = self.options.get_mut(key) {
                 match (&mut opt.option_type, optval) {

@@ -499,7 +499,7 @@ dependencies = [
 [[package]]
 name = "mintymacks"
 version = "0.1.0"
-source = "git+https://github.com/Kile-Asmussen/mintymacks#418d11360344b720feb7b9ee3030515718b90453"
+source = "git+https://github.com/Kile-Asmussen/mintymacks#7358e8c385a5c7c724cf62f0b8e6ba958a939e9f"
 dependencies = [
  "anyhow",
  "chrono",

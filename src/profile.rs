@@ -63,7 +63,7 @@ pub struct EngineMetadata {
     pub log: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OptSet {
     Check(bool),

@@ -28,7 +28,7 @@ use mintymacks::{
     zobrist::{ZobHash, ZobristBoard},
 };
 use tokio::{
-    io::{AsyncWriteExt, stdout},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout},
     select,
     time::{Instant, sleep},
 };
@@ -53,6 +53,10 @@ pub struct Faceoff {
     /// Turn time in miliseconds
     #[clap(long)]
     pub time: u64,
+
+    /// Turn timeout in miliseconds
+    #[clap(long)]
+    pub timeout: u64,
 }
 
 impl Runnable for Faceoff {
@@ -73,14 +77,11 @@ impl Runnable for Faceoff {
 
         let (mut black_engine, mut black_details) = load_engine(&black_profile).await?;
 
-        set_ownbook(&mut white_engine, &mut white_details);
-        set_ownbook(&mut black_engine, &mut black_details);
-
         white_engine
             .interleave(
                 &mut VecDeque::from([UciGui::UciNewGame()]),
                 &mut vec![],
-                Duration::from_millis(100),
+                Duration::from_millis(1000),
             )
             .await?;
         black_engine
@@ -97,8 +98,8 @@ impl Runnable for Faceoff {
             end: "*".to_string(),
         };
 
-        res.headers.white = Some(white_details.name.clone());
-        res.headers.black = Some(black_details.name.clone());
+        res.headers.white = Some(white_profile.engine.name.clone());
+        res.headers.black = Some(black_profile.engine.name.clone());
 
         let mut board = BitBoard::startpos();
         let mut pseudomoves = vec![];
@@ -106,7 +107,7 @@ impl Runnable for Faceoff {
         let mut hasher = ZobristBoard::new();
         let mut halfmoves = 0;
         let mut seen = hash_map! {
-            hasher.hash(&board) => 1
+            hasher.hash(&board) ^ hasher.metadata.hash_color(board.metadata.to_move) => 1
         };
         board.moves(&mut current);
 
@@ -130,6 +131,7 @@ impl Runnable for Faceoff {
                 &pseudomoves,
                 &current,
                 self.time,
+                self.timeout,
                 &mut res.end,
             )
             .await?
@@ -137,7 +139,7 @@ impl Runnable for Faceoff {
                 break;
             };
 
-            let (am, win) = make_moves(
+            let (mut am, win) = make_moves(
                 &mut board,
                 &hasher,
                 &mut seen,
@@ -155,7 +157,7 @@ impl Runnable for Faceoff {
             if win.is_some() {
                 res.end = winstring(win);
                 break;
-            }
+            };
 
             show_pgn(&res).await?;
 
@@ -165,6 +167,7 @@ impl Runnable for Faceoff {
                 &pseudomoves,
                 &current,
                 self.time,
+                self.timeout,
                 &mut res.end,
             )
             .await?
@@ -172,7 +175,7 @@ impl Runnable for Faceoff {
                 break;
             };
 
-            let (am, win) = make_moves(
+            let (mut am, win) = make_moves(
                 &mut board,
                 &hasher,
                 &mut seen,
@@ -186,11 +189,11 @@ impl Runnable for Faceoff {
 
             pair.black = Some(am);
             res.moves.pop();
-            res.moves.push(pair);
+            res.moves.push(pair.clone());
             if win.is_some() {
                 res.end = winstring(win);
                 break;
-            }
+            };
 
             show_pgn(&res).await?;
         }
@@ -226,6 +229,9 @@ fn make_moves(
     }
     current.clear();
     board.moves(current);
+    *seen
+        .entry(hasher.hash(&board) ^ hasher.metadata.hash_color(board.metadata.to_move))
+        .or_insert(0) += 1;
     *halfmoves += 1;
     if cm.irreversible() {
         *halfmoves = 0;
@@ -239,7 +245,7 @@ fn make_moves(
         seen,
     );
     if win.is_some() && win == Some(Victory::from_color(cm.piece.color())) {
-        am.check_or_mate = Some(false);
+        am.check_or_mate = Some(true);
     }
 
     (am, win)
@@ -259,11 +265,12 @@ async fn find_move(
     history: &[LongAlg],
     current: &[ChessMove],
     time: u64,
+    timeout: u64,
     end: &mut String,
 ) -> tokio::io::Result<Option<(ChessMove, AlgebraicMove, LongAlg)>> {
     let mover = board.metadata.to_move;
 
-    let Some(BestMove { best: pmv, .. }) = best_move(engine, &history, time).await? else {
+    let Some(BestMove { best: pmv, .. }) = best_move(engine, &history, time, timeout).await? else {
         *end = winstring(Some(Victory::from_color(mover.opposite())));
         *end += " {timeout}";
         return Ok(None);
@@ -308,6 +315,7 @@ async fn best_move(
     engine: &mut EngineHandle,
     move_history: &[(PseudoMove, Option<ChessPiece>)],
     time: u64,
+    timeout: u64,
 ) -> tokio::io::Result<Option<BestMove>> {
     let mut arg = VecDeque::from([
         UciGui::Position(PositionString::Startpos(), Vec::from(move_history)),
@@ -321,7 +329,7 @@ async fn best_move(
 
     loop {
         select! {
-            _ = sleep(Duration::from_millis(time) / 100) => {}
+            _ = sleep(Duration::from_millis(time) / 10) => {}
             Ok(uci) = ingress.receive() => {
                 if let Some(UciEngine::BestMove(bm)) = uci {
                     return Ok(Some(bm));
@@ -338,34 +346,10 @@ async fn best_move(
             arg.push_back(UciGui::Stop());
         }
 
-        if now.elapsed() > Duration::from_millis(time) * 5 {
+        if now.elapsed() > Duration::from_millis(timeout) {
             return Ok(None);
         }
     }
-}
-
-async fn set_ownbook(
-    engine: &mut EngineHandle,
-    details: &mut EngineDetails,
-) -> tokio::io::Result<()> {
-    details
-        .options
-        .entry("OwnBook".to_string())
-        .and_modify(|e| {
-            if let OptionType::Check(c) = &mut e.option_type {
-                c.value = Some(true)
-            }
-        });
-
-    engine
-        .interleave(
-            &mut details.set_options(),
-            &mut vec![],
-            Duration::from_millis(100),
-        )
-        .await?;
-
-    Ok(())
 }
 
 async fn show_pgn(pgn: &PGN) -> tokio::io::Result<()> {

@@ -153,9 +153,8 @@ impl Runnable for NewBot {
     async fn run(self) -> tokio::io::Result<ExitCode> {
         let mut engine = EngineHandle::open(&self.bot, &self.args, false).await?;
 
-        let details = EngineDetails::extract(&mut engine).await?;
+        let details = EngineDetails::extract(&mut engine, Duration::from_millis(1000)).await?;
 
-        sleep(Duration::from_millis(1000)).await;
         engine.quit().await?;
 
         let metadata = EngineMetadata {
