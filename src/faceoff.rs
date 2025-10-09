@@ -249,7 +249,7 @@ async fn find_move(
                 .join(", ")
         );
         *end += &format!(
-            "{{ {:?} }}",
+            "\n{{ {:?} }}",
             current.iter().find(|cm| cm.simplify().0 == pmv.0)
         );
         return Ok(None);
