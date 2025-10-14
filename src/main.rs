@@ -39,14 +39,11 @@ use crate::{
     widgets::BoardRenderer,
 };
 
-mod engine;
 mod faceoff;
 mod move_select;
 mod new_profile;
 mod openings;
 mod player;
-mod profile;
-mod settings;
 mod widgets;
 
 pub trait Runnable {

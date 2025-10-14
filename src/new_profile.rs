@@ -7,9 +7,13 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
-use mintymacks::notation::uci::{
-    engine::{EngineOption, OptionType, SpinType, UciEngine},
-    gui::UciGui,
+use mintymacks::{
+    engine::{EngineDetails, EngineHandle},
+    notation::uci::{
+        engine::{EngineOption, OptionType, SpinType, UciEngine},
+        gui::UciGui,
+    },
+    profile::{EngineMetadata, PlayerMetadata, PlayerProfile, Profile},
 };
 use serde::{Deserialize, Serialize, de::Visitor};
 use tokio::{
@@ -22,12 +26,7 @@ use tokio::{
     time::sleep,
 };
 
-use crate::{
-    Runnable,
-    engine::{EngineDetails, EngineHandle},
-    player::EnginePlayer,
-    profile::{EngineMetadata, PlayerMetadata, PlayerProfile, Profile},
-};
+use crate::{Runnable, player::EnginePlayer};
 
 #[derive(Parser)]
 pub struct NewCommand {

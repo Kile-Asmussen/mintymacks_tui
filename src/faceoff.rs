@@ -11,6 +11,8 @@ use clap::Parser;
 use crossterm::{cursor, execute, style, terminal};
 use mintymacks::{
     bits::board::{self, BitBoard},
+    engine::{EngineHandle, load_engine},
+    game::GameState,
     model::{
         ChessPiece, Victory,
         moves::{ChessMove, PseudoMove},
@@ -25,6 +27,7 @@ use mintymacks::{
             gui::{GoCommand, PositionString, UciGui},
         },
     },
+    profile::EngineProfile,
     zobrist::{ZobHash, ZobristBoard},
 };
 use tokio::{
@@ -33,12 +36,7 @@ use tokio::{
     time::{Instant, sleep},
 };
 
-use crate::{
-    Runnable,
-    engine::{EngineDetails, EngineHandle, load_engine},
-    player::EnginePlayer,
-    profile::EngineProfile,
-};
+use crate::Runnable;
 
 #[derive(Parser)]
 pub struct Faceoff {
@@ -96,232 +94,11 @@ impl Runnable for Faceoff {
             )
             .await?;
 
-        let mut res = PGN {
-            headers: PGNHeaders::default(),
-            moves: vec![],
-            end: "*".to_string(),
-        };
-
-        res.headers.white = Some(white_profile.engine.name.clone());
-        res.headers.black = Some(black_profile.engine.name.clone());
-
-        let mut board = BitBoard::startpos();
-        let mut pseudomoves = vec![];
-        let mut current = vec![];
-        let mut hasher = ZobristBoard::new();
-        let mut halfmoves = 0;
-        let mut seen = hash_map! {
-            hasher.hash(&board) ^ hasher.metadata.hash_color(board.metadata.to_move) => 1
-        };
-        board.moves(&mut current);
-
-        loop {
-            let mut pair = MovePair {
-                turn: board.metadata.turn as u64,
-                white: None,
-                white_nag: 0,
-                white_comment: None,
-                black: None,
-                black_nag: 0,
-                black_comment: None,
-            };
-
-            res.moves.push(pair.clone());
-            if !self.quiet {
-                show_pgn(&res, true).await?;
-            }
-
-            let Some((cm, mut am, pmv)) = find_move(
-                &mut board,
-                &mut white_engine,
-                &pseudomoves,
-                &current,
-                self.time,
-                self.timeout,
-                &mut res.end,
-            )
-            .await?
-            else {
-                break;
-            };
-
-            let (mut am, win) = make_moves(
-                &mut board,
-                &hasher,
-                &mut seen,
-                &mut halfmoves,
-                cm,
-                am,
-                pmv,
-                &mut pseudomoves,
-                &mut current,
-            );
-
-            pair.white = Some(am);
-            res.moves.pop();
-            res.moves.push(pair.clone());
-            if win.is_some() {
-                res.end = winstring(win);
-                break;
-            };
-
-            if !self.quiet {
-                show_pgn(&res, true).await?;
-            }
-
-            let Some((cm, mut am, pmv)) = find_move(
-                &mut board,
-                &mut black_engine,
-                &pseudomoves,
-                &current,
-                self.time,
-                self.timeout,
-                &mut res.end,
-            )
-            .await?
-            else {
-                break;
-            };
-
-            let (mut am, win) = make_moves(
-                &mut board,
-                &hasher,
-                &mut seen,
-                &mut halfmoves,
-                cm,
-                am,
-                pmv,
-                &mut pseudomoves,
-                &mut current,
-            );
-
-            pair.black = Some(am);
-            res.moves.pop();
-            res.moves.push(pair.clone());
-            if win.is_some() {
-                res.end = winstring(win);
-                break;
-            };
-
-            if !self.quiet {
-                show_pgn(&res, true).await?;
-            }
-        }
-
-        if self.quiet {
-            show_pgn(&res, false).await?;
-        } else {
-            show_pgn(&res, true).await?;
-        }
+        let mut game = GameState::startpos();
+        game.white = Some(mintymacks::profile::Profile::Engine(white_profile.clone()));
+        game.black = Some(mintymacks::profile::Profile::Engine(black_profile.clone()));
 
         Ok(ExitCode::SUCCESS)
-    }
-}
-
-async fn show(mut s: String) -> tokio::io::Result<()> {
-    s += "\n";
-    stdout().write_all(s.as_bytes()).await?;
-    stdout().flush().await?;
-    Ok(())
-}
-
-fn make_moves(
-    board: &mut BitBoard,
-    hasher: &ZobristBoard,
-    seen: &mut HashMap<ZobHash, u8>,
-    halfmoves: &mut u16,
-    cm: ChessMove,
-    mut am: AlgebraicMove,
-    pmv: LongAlg,
-    pseudomoves: &mut Vec<LongAlg>,
-    current: &mut Vec<ChessMove>,
-) -> (AlgebraicMove, Option<Victory>) {
-    board.apply(cm);
-    pseudomoves.push(pmv);
-    if check(&board) {
-        am.check_or_mate = Some(false);
-    }
-    current.clear();
-    board.moves(current);
-    *seen
-        .entry(hasher.hash(&board) ^ hasher.metadata.hash_color(board.metadata.to_move))
-        .or_insert(0) += 1;
-    *halfmoves += 1;
-    if cm.irreversible() {
-        *halfmoves = 0;
-    }
-
-    let win = Victory::determine(
-        board,
-        hasher.hash(board) ^ hasher.metadata.hash_color(board.metadata.to_move),
-        &current,
-        *halfmoves,
-        seen,
-    );
-    if win.is_some() && win == Some(Victory::from_color(cm.piece.color())) {
-        am.check_or_mate = Some(true);
-    }
-
-    (am, win)
-}
-
-fn check(board: &BitBoard) -> bool {
-    let (act, pas) = board.active_passive(board.metadata.to_move);
-
-    let threats = pas.threats(board.metadata.to_move.opposite(), act.total, None, None);
-
-    (act.kings & threats) != 0
-}
-
-async fn find_move(
-    board: &mut BitBoard,
-    engine: &mut EngineHandle,
-    history: &[LongAlg],
-    current: &[ChessMove],
-    time: u64,
-    timeout: u64,
-    end: &mut String,
-) -> tokio::io::Result<Option<(ChessMove, AlgebraicMove, LongAlg)>> {
-    let mover = board.metadata.to_move;
-
-    let Some(BestMove { best: pmv, .. }) = best_move(engine, &history, time, timeout).await? else {
-        *end = winstring(Some(Victory::from_color(mover.opposite())));
-        *end += " {timeout}";
-        return Ok(None);
-    };
-
-    let Some(cm) = current.iter().find(|cm| cm.simplify() == pmv) else {
-        *end = winstring(Some(Victory::from_color(mover.opposite())));
-        *end += &format!("\n{{illegal move {} suggested}}", pmv.0.longalg(pmv.1));
-        *end += &format!("\n{{FEN {}}}", render_fen(&board, 0));
-        *end += &format!(
-            "\n{{Legal moves: {}}}",
-            current
-                .iter()
-                .map(|cm| (cm.ambiguate(&board, &current), cm.simplify()))
-                .map(|(a, (m, p))| format!("{} ({})", a.to_string(), m.longalg(p)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        *end += &format!(
-            "\n{{ {:?} }}",
-            current.iter().find(|cm| cm.simplify().0 == pmv.0)
-        );
-        return Ok(None);
-    };
-    let cm = *cm;
-
-    let am = cm.ambiguate(&board, &current);
-
-    Ok(Some((cm, am, pmv)))
-}
-
-fn winstring(vic: Option<Victory>) -> String {
-    match vic {
-        Some(Victory::WhiteWins) => "1-0".to_string(),
-        Some(Victory::BlackWins) => "0-1".to_string(),
-        Some(Victory::Draw) => "1/2-1/2".to_string(),
-        None => "*".to_string(),
     }
 }
 
