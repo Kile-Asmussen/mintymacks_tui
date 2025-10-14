@@ -10,6 +10,7 @@
 #![allow(async_fn_in_trait)]
 #![feature(push_mut)]
 #![feature(format_args_nl)]
+#![feature(string_from_utf8_lossy_owned)]
 
 use clap::{Parser, Subcommand};
 use crossterm::{
@@ -34,11 +35,12 @@ use tokio::{io::AsyncWriteExt, select, time::sleep};
 use tokio_stream::{Stream, StreamExt};
 
 use crate::{
+    analyze::ReviewGame,
     faceoff::Faceoff,
     new_profile::{NewBot, NewCommand, ProfileCommand},
-    widgets::BoardRenderer,
 };
 
+mod analyze;
 mod faceoff;
 mod move_select;
 mod new_profile;
@@ -61,6 +63,7 @@ impl Runnable for Command {
         match &self.subcommand {
             SubCommand::New(np) => np.tui(),
             SubCommand::Fight(faceoff) => faceoff.tui(),
+            SubCommand::Review(analyze_game) => analyze_game.tui(),
         }
     }
 
@@ -68,6 +71,7 @@ impl Runnable for Command {
         match self.subcommand {
             SubCommand::New(np) => np.run().await,
             SubCommand::Fight(faceoff) => faceoff.run().await,
+            SubCommand::Review(analyze_game) => analyze_game.run().await,
         }
     }
 }
@@ -78,6 +82,8 @@ pub enum SubCommand {
     New(NewCommand),
     /// Faces two chessbots off against each other
     Fight(Faceoff),
+    /// Review a game from a PGN file
+    Review(ReviewGame),
 }
 
 #[tokio::main]

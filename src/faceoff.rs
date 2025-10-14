@@ -200,25 +200,3 @@ async fn query_best_move(
         }
     }
 }
-
-async fn show_pgn(pgn: &PGN, clear: bool) -> tokio::io::Result<()> {
-    let mut s = "\n".to_string();
-    pgn.to_string(&mut s, true);
-    let mut res = vec![];
-
-    if clear {
-        execute!(
-            res,
-            terminal::Clear(terminal::ClearType::All),
-            cursor::MoveTo(0, 0),
-            style::Print(s)
-        );
-    } else {
-        execute!(res, style::Print(s));
-    }
-
-    stdout().write_all(&res[..]).await?;
-    stdout().flush().await?;
-
-    Ok(())
-}

@@ -1,63 +1,18 @@
-use tokio::io::{AsyncWriteExt, stdout};
-
 use crossterm::{
-    Command, cursor,
-    event::{self, Event, MouseButton, MouseEventKind},
-    execute, queue,
+    cursor, queue,
     style::{self, Stylize},
-    terminal,
 };
 use mintymacks::{
     arrays::ArrayBoard,
     bits::BoardMask,
-    model::{self, BoardFile, BoardRank, ChessPiece, Color, ColoredChessPiece, Square},
+    model::{BoardFile, BoardRank, ChessPiece, Color, ColoredChessPiece, Square},
 };
 
-static mut SETUP: bool = false;
-
-pub async fn setup() -> tokio::io::Result<()> {
-    terminal::enable_raw_mode();
-    let mut out = vec![];
-    execute!(
-        out,
-        terminal::EnterAlternateScreen,
-        cursor::Hide,
-        event::EnableMouseCapture,
-        terminal::SetTitle("MINTYMACKS")
-    );
-    stdout().write(&out[..]).await?;
-    stdout().flush().await?;
-
-    unsafe {
-        SETUP = true;
-    }
-
-    Ok(())
-}
-
-pub async fn teardown() -> tokio::io::Result<()> {
-    if unsafe { !SETUP } {
-        return Ok(());
-    }
-
-    terminal::disable_raw_mode();
-    let mut out = vec![];
-    execute!(
-        out,
-        event::DisableMouseCapture,
-        cursor::Show,
-        terminal::LeaveAlternateScreen,
-    );
-    stdout().write(&out[..]).await?;
-    stdout().flush().await?;
-
-    Ok(())
-}
-
-pub struct BoardRenderer {
-    pub row: u16,
-    pub col: u16,
-    pub rotated: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BoardRenderer {
+    row: u16,
+    col: u16,
+    rotated: bool,
 }
 
 impl BoardRenderer {
@@ -110,7 +65,7 @@ impl BoardRenderer {
         &self,
         board: &ArrayBoard<Option<ColoredChessPiece>>,
         highlight: BoardMask,
-        selected: BoardMask,
+        selectable: BoardMask,
     ) -> Vec<u8> {
         let mut res = vec![];
 
@@ -125,7 +80,7 @@ impl BoardRenderer {
                 sq,
                 pc,
                 highlight & sq.bit() != 0,
-                selected & sq.bit() != 0,
+                selectable & sq.bit() != 0,
                 &mut res,
             );
         }
@@ -180,9 +135,9 @@ impl BoardRenderer {
 
         let line2 = if let Some(pc) = pc {
             (if selected {
-                format!(" ({}) ", Self::piece(pc.piece()))
+                format!(" ({}) ", Self::unicode_piece(pc.piece()))
             } else {
-                format!("  {}  ", Self::piece(pc.piece()))
+                format!("  {}  ", Self::unicode_piece(pc.piece()))
             })
             .stylize()
             .with(Self::color(pc.color()))
@@ -220,14 +175,15 @@ impl BoardRenderer {
         }
     }
 
-    pub fn piece(pc: ChessPiece) -> char {
+    pub fn unicode_piece(pc: ChessPiece) -> char {
+        use ChessPiece::*;
         match pc {
-            ChessPiece::Pawn => '\u{265F}',
-            ChessPiece::Knight => '\u{265E}',
-            ChessPiece::Bishop => '\u{265D}',
-            ChessPiece::Rook => '\u{265C}',
-            ChessPiece::Queen => '\u{265B}',
-            ChessPiece::King => '\u{265A}',
+            Pawn => '\u{265F}',
+            Knight => '\u{265E}',
+            Bishop => '\u{265D}',
+            Rook => '\u{265C}',
+            Queen => '\u{265B}',
+            King => '\u{265A}',
         }
     }
 }
