@@ -9,6 +9,7 @@
 #![feature(adt_const_params)]
 #![allow(async_fn_in_trait)]
 #![feature(push_mut)]
+#![feature(format_args_nl)]
 
 use clap::{Parser, Subcommand};
 use crossterm::{
@@ -33,7 +34,6 @@ use tokio::{io::AsyncWriteExt, select, time::sleep};
 use tokio_stream::{Stream, StreamExt};
 
 use crate::{
-    engine::EngineHandle,
     faceoff::Faceoff,
     new_profile::{NewBot, NewCommand, ProfileCommand},
     widgets::BoardRenderer,
@@ -42,8 +42,6 @@ use crate::{
 mod faceoff;
 mod move_select;
 mod new_profile;
-mod openings;
-mod player;
 mod widgets;
 
 pub trait Runnable {

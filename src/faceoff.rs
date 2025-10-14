@@ -1,4 +1,3 @@
-use core::hash;
 use std::{
     collections::{HashMap, VecDeque},
     fmt::format,
@@ -15,10 +14,11 @@ use mintymacks::{
     engine::{EngineHandle, load_engine},
     game::GameState,
     model::{
-        ChessPiece, Victory,
+        ChessPiece, Victory, WinReason,
         moves::{ChessMove, PseudoMove},
     },
     notation::{
+        LongAlg,
         algebraic::AlgebraicMove,
         fen::render_fen,
         pgn::{MovePair, PGN},
@@ -27,7 +27,9 @@ use mintymacks::{
             gui::{GoCommand, PositionString, UciGui},
         },
     },
+    print_async,
     profile::EngineProfile,
+    utils::{eprintln_async, println_async},
     zobrist::{ZobHash, ZobristBoard},
 };
 use tokio::{
@@ -55,10 +57,6 @@ pub struct Faceoff {
     /// Turn timeout in miliseconds
     #[clap(long)]
     pub timeout: u64,
-
-    /// Only print the end result
-    #[clap(short)]
-    pub quiet: bool,
 }
 
 impl Runnable for Faceoff {
@@ -67,6 +65,7 @@ impl Runnable for Faceoff {
     }
 
     async fn run(self) -> tokio::io::Result<ExitCode> {
+        eprintln_async!("Loading profiles...").await;
         let white_profile = tokio::fs::read(&self.white).await?;
         let black_profile = tokio::fs::read(&self.black).await?;
 
@@ -75,55 +74,88 @@ impl Runnable for Faceoff {
         let white_profile: EngineProfile = toml::from_slice(&white_profile).map_err(bad_file)?;
         let black_profile: EngineProfile = toml::from_slice(&black_profile).map_err(bad_file)?;
 
+        eprintln_async!("Loading white engine...").await;
         let (mut white_engine, mut white_details) = load_engine(&white_profile).await?;
-
+        eprintln_async!("Loading black engine...").await;
         let (mut black_engine, mut black_details) = load_engine(&black_profile).await?;
 
+        eprintln_async!("Initializing white engine...").await;
         let mut ingress = vec![];
         white_engine
             .interleave_until(
                 &mut deque![UciGui::UciNewGame(), UciGui::IsReady()],
                 &mut ingress,
                 |x| x == &UciEngine::ReadyOk(),
-                Duration::from_millis(5000),
+                Duration::from_millis(1000),
             )
             .await?;
         if ingress.last() != Some(&UciEngine::ReadyOk()) {
             return Ok(ExitCode::FAILURE);
         }
 
+        eprintln_async!("Initializing black engine...").await;
         ingress.clear();
         black_engine
             .interleave_until(
                 &mut deque![UciGui::UciNewGame(), UciGui::IsReady()],
                 &mut ingress,
                 |x| x == &UciEngine::ReadyOk(),
-                Duration::from_millis(5000),
+                Duration::from_millis(1000),
             )
             .await?;
         if ingress.last() != Some(&UciEngine::ReadyOk()) {
             return Ok(ExitCode::FAILURE);
         }
 
+        eprintln_async!("Starting game...").await;
+
         let mut game = GameState::startpos();
         game.white = Some(mintymacks::profile::Profile::Engine(white_profile.clone()));
         game.black = Some(mintymacks::profile::Profile::Engine(black_profile.clone()));
 
-        let mut ponder_white = None;
-        let mut move_white = (PseudoMove::NULL, None);
-        let mut ponder_black = None;
-        let mut move_black = (PseudoMove::NULL, None);
-
-        let time = Duration::from_millis(self.time)
+        let time = Duration::from_millis(self.time);
         let timeout = Duration::from_millis(self.timeout);
 
+        for (k, v) in game.pgn_header().0 {
+            println_async!("[{k} \"{v}\"]").await;
+        }
+        println_async!().await;
+
         loop {
-            if let Some(m) = query_best_move(&mut white_engine, &mut game, time, timeout, ).await? {
-                ponder_white = m.ponder;
+            if let Some(v) = game.outcome {
+                println_async!("{}", v.to_string()).await;
+                break;
+            } else {
+                println_async!().await;
+            }
+
+            print_async!("{}. ", game.board.metadata.turn).await;
+
+            if let Some(m) = query_best_move(&mut white_engine, &mut game, time, timeout).await? {
                 if let Ok(fm) = game.find_move(m.best) {
-                    game.apply(fm);
-                    move_white = Some(m.best);
+                    print_async!("{} ", game.apply(fm).unwrap().algebraic.to_string()).await;
+                } else {
+                    game.outcome = Some(Victory::BlackWins(WinReason::Forefeit));
+                    print_async!("{}", m.best.0.longalg(m.best.1)).await;
                 }
+            } else {
+                game.outcome = Some(Victory::BlackWins(WinReason::Time));
+            }
+
+            if let Some(v) = game.outcome {
+                println_async!("{}", v.to_string()).await;
+                break;
+            }
+
+            if let Some(m) = query_best_move(&mut black_engine, &mut game, time, timeout).await? {
+                if let Ok(fm) = game.find_move(m.best) {
+                    print_async!("{} ", game.apply(fm).unwrap().algebraic.to_string()).await;
+                } else {
+                    game.outcome = Some(Victory::WhiteWins(WinReason::Forefeit));
+                    print_async!("{}", m.best.0.longalg(m.best.1)).await;
+                }
+            } else {
+                game.outcome = Some(Victory::WhiteWins(WinReason::Time));
             }
         }
 
@@ -133,10 +165,9 @@ impl Runnable for Faceoff {
 
 async fn query_best_move(
     engine: &mut EngineHandle,
-    game: &mut GameState,
+    game: &GameState,
     time: Duration,
     timeout: Duration,
-    ponderhit: bool,
 ) -> tokio::io::Result<Option<BestMove>> {
     let mut arg = deque![
         UciGui::Position(game.uci_position(), game.uci_line()),
@@ -149,7 +180,7 @@ async fn query_best_move(
 
     loop {
         select! {
-            _ = sleep(timeout / 10) => {}
+            _ = sleep(time / 10) => {}
             Ok(uci) = ingress.receive() => {
                 if let UciEngine::BestMove(bm) = uci {
                     return Ok(Some(bm));

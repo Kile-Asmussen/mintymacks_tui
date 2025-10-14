@@ -26,7 +26,7 @@ impl MoveSelect {
     pub fn matches(self, mv: ChessMove) -> bool {
         Some(mv.pmv.from) == self.origin
             && (Some(mv.pmv.to) == self.destination || self.destination.is_none())
-            && (mv.special == self.promotion() || self.promotion().is_none())
+            && (mv.spc == self.promotion() || self.promotion().is_none())
     }
 
     pub fn promotion(self) -> Option<SpecialMove> {
