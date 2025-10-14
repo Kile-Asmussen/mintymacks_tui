@@ -2,8 +2,11 @@ use std::{path::PathBuf, process::ExitCode};
 
 use clap::Parser;
 use mintymacks::{
-    model::Color,
-    notation::pgn::{PGN, PGNTags, load_pgn_file},
+    bits::board::BitBoard,
+    eprintln_async,
+    game::{GameReview, GameState},
+    model::{Color, Victory},
+    notation::pgn::{MovePair, PGN, PGNTags, load_pgn_file},
 };
 
 use crate::Runnable;
@@ -24,32 +27,23 @@ impl Runnable for ReviewGame {
             tokio::fs::read(self.file).await?,
         ));
 
-        let mut index = 0usize;
+        let reviews = vec![];
+
+        for (ix, pgn) in pgns.into_iter().enumerate() {
+            let ix = ix + 1;
+            let game = GameState::from_pgn(&pgn);
+
+            let game = match game {
+                Err(s) => {
+                    eprintln_async!("Error in parsing PGN game #{}: {}", ix, s);
+                    return Ok(ExitCode::FAILURE);
+                }
+                Ok(g) => g,
+            };
+
+            reviews.push(GameReview::new(&game))
+        }
 
         Ok(ExitCode::SUCCESS)
     }
-}
-
-pub struct GameReviewer {
-    pgns: Vec<PGN>,
-    game_index: usize,
-    move_index: (u16, Color),
-}
-
-impl GameReviewer {
-    fn next_game(&mut self) {
-        if self.game_index < self.pgns.len() {
-            self.game_index += 1;
-            self.move_index = (1, Color::White);
-        }
-    }
-
-    fn prev_game(&mut self) {
-        if self.game_index > 0 {
-            self.game_index -= 1;
-            self.move_index = (1, Color::White);
-        }
-    }
-
-    fn headers(&self) -> &PGNTags {}
 }
