@@ -35,14 +35,7 @@ pub struct NewCommand {
 }
 
 impl Runnable for NewCommand {
-    fn tui(&self) -> bool {
-        match &self.profile {
-            ProfileCommand::Player(new_player) => new_player.tui(),
-            ProfileCommand::Bot(new_bot) => new_bot.tui(),
-        }
-    }
-
-    async fn run(self) -> tokio::io::Result<ExitCode> {
+    async fn run(self) -> tokio::io::Result<()> {
         match self.profile {
             ProfileCommand::Player(new_player) => new_player.run().await,
             ProfileCommand::Bot(new_bot) => new_bot.run().await,
@@ -51,7 +44,7 @@ impl Runnable for NewCommand {
 }
 
 impl NewCommand {
-    pub async fn create_profile(name: &str, res: String) -> tokio::io::Result<ExitCode> {
+    pub async fn create_profile(name: &str, res: String) -> tokio::io::Result<()> {
         let filename = name.to_lowercase().replace(" ", "-") + ".toml";
 
         if let Ok(file) = File::create_new(&filename).await {
@@ -65,14 +58,14 @@ impl NewCommand {
                 .await?;
             stderr().flush().await?;
 
-            Ok(ExitCode::SUCCESS)
+            ExitCode::SUCCESS.exit_process();
         } else {
             stderr()
                 .write_all(format!("Profile already exists: {filename}\n").as_bytes())
                 .await?;
             stderr().flush().await?;
 
-            Ok(ExitCode::FAILURE)
+            ExitCode::FAILURE.exit_process();
         }
     }
 }
@@ -90,11 +83,7 @@ pub enum ProfileCommand {
 pub struct NewPlayer;
 
 impl Runnable for NewPlayer {
-    fn tui(&self) -> bool {
-        false
-    }
-
-    async fn run(self) -> tokio::io::Result<ExitCode> {
+    async fn run(self) -> tokio::io::Result<()> {
         let mut cin = BufReader::new(stdin());
 
         stderr().write_all(b"Name: ").await?;
@@ -145,11 +134,7 @@ pub struct NewBot {
 }
 
 impl Runnable for NewBot {
-    fn tui(&self) -> bool {
-        false
-    }
-
-    async fn run(self) -> tokio::io::Result<ExitCode> {
+    async fn run(self) -> tokio::io::Result<()> {
         let mut engine = EngineHandle::open(&self.bot, &self.args, false).await?;
 
         let details = EngineDetails::extract(&mut engine, Duration::from_millis(1000)).await?;

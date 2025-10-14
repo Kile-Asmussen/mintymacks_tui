@@ -9,10 +9,10 @@ use mintymacks::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct BoardRenderer {
-    row: u16,
-    col: u16,
-    rotated: bool,
+pub struct BoardRenderer {
+    pub row: u16,
+    pub col: u16,
+    pub rotated: bool,
 }
 
 impl BoardRenderer {
@@ -22,19 +22,14 @@ impl BoardRenderer {
         b: 0x55,
     };
     pub const LIGHT: style::Color = style::Color::Rgb {
-        r: 0xCC,
-        g: 0xBB,
-        b: 0xAA,
-    };
-    pub const HIGHLIGHT: style::Color = style::Color::Rgb {
-        r: 0xDD,
+        r: 0x99,
         g: 0x88,
-        b: 0x88,
+        b: 0x77,
     };
     pub const GREY: style::Color = style::Color::Rgb {
-        r: 0x88,
-        g: 0x88,
-        b: 0x88,
+        r: 0x77,
+        g: 0x77,
+        b: 0x77,
     };
 
     pub fn translate(&self, row: u16, col: u16) -> Option<Square> {
@@ -69,13 +64,19 @@ impl BoardRenderer {
     ) -> Vec<u8> {
         let mut res = vec![];
 
+        let highlight = if self.rotated {
+            highlight.reverse_bits()
+        } else {
+            highlight
+        };
+
         for (mut sq, pc) in board {
             if self.rotated {
                 sq = Self::rotate(sq)
             }
 
-            let (row, col) = self.corner(sq);
-            queue!(res, cursor::MoveTo(row, col));
+            let (col, row) = self.corner(sq);
+            queue!(res, cursor::MoveTo(col, row));
             self.square(
                 sq,
                 pc,
@@ -92,7 +93,7 @@ impl BoardRenderer {
         let (f, r) = sq.file_rank();
         let mut f = f.ix() as u16;
         let mut r = r.ix() as u16 / 8;
-        (self.row + f * 5, self.col + (7 - r) * 3)
+        (self.col + f * 5, self.row + (7 - r) * 3)
     }
 
     pub fn square(
@@ -110,14 +111,29 @@ impl BoardRenderer {
         };
 
         if highlight {
-            fg = Self::GREY;
-            bg = Self::HIGHLIGHT;
+            fg = match fg {
+                style::Color::Rgb { r, g, b } => style::Color::Rgb {
+                    r: r - 0x22,
+                    g,
+                    b: b + 0x11,
+                },
+                _ => fg,
+            };
+            bg = match bg {
+                style::Color::Rgb { r, g, b } => style::Color::Rgb {
+                    r: r - 0x22,
+                    g,
+                    b: b + 0x11,
+                },
+                _ => bg,
+            };
         }
 
         let lsq = if self.rotated { Self::rotate(sq) } else { sq };
         let line1 = if sq.file_rank().0 == BoardFile::H {
             format!("    {}", lsq.file_rank().1.digit())
                 .stylize()
+                .bold()
                 .with(fg)
                 .on(bg)
         } else {
@@ -127,6 +143,7 @@ impl BoardRenderer {
         let line3 = if sq.file_rank().1 == BoardRank::_1 {
             format!("{}    ", lsq.file_rank().0.letter())
                 .stylize()
+                .bold()
                 .with(fg)
                 .on(bg)
         } else {
@@ -135,9 +152,9 @@ impl BoardRenderer {
 
         let line2 = if let Some(pc) = pc {
             (if selected {
-                format!(" ({}) ", Self::unicode_piece(pc.piece()))
+                format!(" ({}) ", Self::unicode_piece(pc.piece())).bold()
             } else {
-                format!("  {}  ", Self::unicode_piece(pc.piece()))
+                format!("  {}  ", Self::unicode_piece(pc.piece())).bold()
             })
             .stylize()
             .with(Self::color(pc.color()))
@@ -145,7 +162,7 @@ impl BoardRenderer {
         } else if selected {
             format!("  \u{25CB}  ").stylize().with(Self::GREY).on(bg)
         } else {
-            format!("     ").stylize().with(Self::GREY).on(bg)
+            format!("     ").stylize().on(bg)
         };
 
         queue!(

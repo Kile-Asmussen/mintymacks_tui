@@ -11,6 +11,7 @@
 #![feature(push_mut)]
 #![feature(format_args_nl)]
 #![feature(string_from_utf8_lossy_owned)]
+#![feature(exitcode_exit_method)]
 
 use clap::{Parser, Subcommand};
 use crossterm::{
@@ -47,9 +48,7 @@ mod new_profile;
 mod widgets;
 
 pub trait Runnable {
-    fn tui(&self) -> bool;
-
-    async fn run(self) -> tokio::io::Result<ExitCode>;
+    async fn run(self) -> tokio::io::Result<()>;
 }
 
 #[derive(Parser)]
@@ -59,15 +58,7 @@ pub struct Command {
 }
 
 impl Runnable for Command {
-    fn tui(&self) -> bool {
-        match &self.subcommand {
-            SubCommand::New(np) => np.tui(),
-            SubCommand::Fight(faceoff) => faceoff.tui(),
-            SubCommand::Review(analyze_game) => analyze_game.tui(),
-        }
-    }
-
-    async fn run(self) -> tokio::io::Result<ExitCode> {
+    async fn run(self) -> tokio::io::Result<()> {
         match self.subcommand {
             SubCommand::New(np) => np.run().await,
             SubCommand::Fight(faceoff) => faceoff.run().await,
@@ -87,19 +78,7 @@ pub enum SubCommand {
 }
 
 #[tokio::main]
-pub async fn main() -> tokio::io::Result<ExitCode> {
+pub async fn main() -> tokio::io::Result<()> {
     let command = Command::parse();
-    let tui = command.tui();
-
-    if tui {
-        widgets::setup().await?;
-    }
-
-    let res = command.run().await;
-
-    if tui {
-        widgets::teardown().await?;
-    }
-
-    res
+    command.run().await
 }

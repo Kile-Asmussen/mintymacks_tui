@@ -60,11 +60,7 @@ pub struct Faceoff {
 }
 
 impl Runnable for Faceoff {
-    fn tui(&self) -> bool {
-        false
-    }
-
-    async fn run(self) -> tokio::io::Result<ExitCode> {
+    async fn run(self) -> tokio::io::Result<()> {
         eprintln_async!("Loading profiles...").await;
         let white_profile = tokio::fs::read(&self.white).await?;
         let black_profile = tokio::fs::read(&self.black).await?;
@@ -90,7 +86,8 @@ impl Runnable for Faceoff {
             )
             .await?;
         if ingress.last() != Some(&UciEngine::ReadyOk()) {
-            return Ok(ExitCode::FAILURE);
+            eprintln_async!("Engine did not respond `readyok' in time.").await;
+            ExitCode::FAILURE.exit_process();
         }
 
         eprintln_async!("Initializing black engine...").await;
@@ -104,7 +101,8 @@ impl Runnable for Faceoff {
             )
             .await?;
         if ingress.last() != Some(&UciEngine::ReadyOk()) {
-            return Ok(ExitCode::FAILURE);
+            eprintln_async!("Engine did not respond `readyok' in time.").await;
+            ExitCode::FAILURE.exit_process();
         }
 
         eprintln_async!("Starting game...").await;
@@ -159,7 +157,7 @@ impl Runnable for Faceoff {
             }
         }
 
-        Ok(ExitCode::SUCCESS)
+        ExitCode::SUCCESS.exit_process();
     }
 }
 

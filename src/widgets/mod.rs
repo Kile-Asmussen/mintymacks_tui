@@ -62,17 +62,17 @@ pub async fn teardown() -> tokio::io::Result<()> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Text {
-    row: u16,
-    col: u16,
-    style: style::ContentStyle,
+pub struct TextRenderer {
+    pub row: u16,
+    pub col: u16,
+    pub style: style::ContentStyle,
 }
 
-impl Text {
+impl TextRenderer {
     pub fn render(self, data: &str) -> Vec<u8> {
         let mut res = vec![];
 
-        queue!(res, cursor::MoveTo(self.row, self.col));
+        queue!(res, cursor::MoveTo(self.col, self.row));
 
         for line in data.lines() {
             let mut line = line.trim_end().stylize();
