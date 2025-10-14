@@ -586,7 +586,7 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 [[package]]
 name = "mintymacks"
 version = "0.1.0"
-source = "git+https://github.com/Kile-Asmussen/mintymacks#35af7897e85146056138c063b325120a345f58fd"
+source = "git+https://github.com/Kile-Asmussen/mintymacks#3a690cbeff512ce207169fdc209beb9016d20fc2"
 dependencies = [
  "anyhow",
  "chrono",

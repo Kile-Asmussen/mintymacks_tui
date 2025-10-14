@@ -11,6 +11,7 @@ use clap::Parser;
 use crossterm::{cursor, execute, style, terminal};
 use mintymacks::{
     bits::board::{self, BitBoard},
+    deque,
     engine::{EngineHandle, load_engine},
     game::GameState,
     model::{
@@ -20,9 +21,8 @@ use mintymacks::{
     notation::{
         algebraic::AlgebraicMove,
         fen::render_fen,
-        pgn::{MovePair, PGN, PGNHeaders},
+        pgn::{MovePair, PGN},
         uci::{
-            LongAlg,
             engine::{BestMove, OptionType, UciEngine},
             gui::{GoCommand, PositionString, UciGui},
         },
@@ -79,40 +79,69 @@ impl Runnable for Faceoff {
 
         let (mut black_engine, mut black_details) = load_engine(&black_profile).await?;
 
+        let mut ingress = vec![];
         white_engine
-            .interleave(
-                &mut VecDeque::from([UciGui::UciNewGame()]),
-                &mut vec![],
-                Duration::from_millis(1000),
+            .interleave_until(
+                &mut deque![UciGui::UciNewGame(), UciGui::IsReady()],
+                &mut ingress,
+                |x| x == &UciEngine::ReadyOk(),
+                Duration::from_millis(5000),
             )
             .await?;
+        if ingress.last() != Some(&UciEngine::ReadyOk()) {
+            return Ok(ExitCode::FAILURE);
+        }
+
+        ingress.clear();
         black_engine
-            .interleave(
-                &mut VecDeque::from([UciGui::UciNewGame()]),
-                &mut vec![],
-                Duration::from_millis(100),
+            .interleave_until(
+                &mut deque![UciGui::UciNewGame(), UciGui::IsReady()],
+                &mut ingress,
+                |x| x == &UciEngine::ReadyOk(),
+                Duration::from_millis(5000),
             )
             .await?;
+        if ingress.last() != Some(&UciEngine::ReadyOk()) {
+            return Ok(ExitCode::FAILURE);
+        }
 
         let mut game = GameState::startpos();
         game.white = Some(mintymacks::profile::Profile::Engine(white_profile.clone()));
         game.black = Some(mintymacks::profile::Profile::Engine(black_profile.clone()));
 
+        let mut ponder_white = None;
+        let mut move_white = (PseudoMove::NULL, None);
+        let mut ponder_black = None;
+        let mut move_black = (PseudoMove::NULL, None);
+
+        let time = Duration::from_millis(self.time)
+        let timeout = Duration::from_millis(self.timeout);
+
+        loop {
+            if let Some(m) = query_best_move(&mut white_engine, &mut game, time, timeout, ).await? {
+                ponder_white = m.ponder;
+                if let Ok(fm) = game.find_move(m.best) {
+                    game.apply(fm);
+                    move_white = Some(m.best);
+                }
+            }
+        }
+
         Ok(ExitCode::SUCCESS)
     }
 }
 
-async fn best_move(
+async fn query_best_move(
     engine: &mut EngineHandle,
-    move_history: &[(PseudoMove, Option<ChessPiece>)],
-    time: u64,
-    timeout: u64,
+    game: &mut GameState,
+    time: Duration,
+    timeout: Duration,
+    ponderhit: bool,
 ) -> tokio::io::Result<Option<BestMove>> {
-    let mut arg = VecDeque::from([
-        UciGui::Position(PositionString::Startpos(), Vec::from(move_history)),
+    let mut arg = deque![
+        UciGui::Position(game.uci_position(), game.uci_line()),
         UciGui::Go(GoCommand::Infinite()),
-    ]);
-    let mut res = vec![];
+    ];
 
     let now = Instant::now();
 
@@ -120,12 +149,10 @@ async fn best_move(
 
     loop {
         select! {
-            _ = sleep(Duration::from_millis(time) / 10) => {}
+            _ = sleep(timeout / 10) => {}
             Ok(uci) = ingress.receive() => {
-                if let Some(UciEngine::BestMove(bm)) = uci {
+                if let UciEngine::BestMove(bm) = uci {
                     return Ok(Some(bm));
-                } else if let Some(uci) = uci {
-                    res.push(uci);
                 }
             }
             _ = egress.send(arg.front()), if !arg.is_empty() => {
@@ -133,11 +160,11 @@ async fn best_move(
             }
         }
 
-        if now.elapsed() > Duration::from_millis(time) {
+        if now.elapsed() > timeout {
             arg.push_back(UciGui::Stop());
         }
 
-        if now.elapsed() > Duration::from_millis(timeout) {
+        if now.elapsed() > timeout * 2 {
             return Ok(None);
         }
     }
